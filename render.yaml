@@ -10,5 +10,3 @@ services:
     envVars:
       - key: BASE_URL
         value: https://fileshare.onrender.com
-      - key: UPLOAD_FOLDER
-        value: /var/data/uploads

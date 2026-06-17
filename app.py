@@ -2,6 +2,7 @@ import os
 import uuid
 import socket
 import io
+import json
 import threading
 from datetime import datetime
 from flask import (
@@ -18,20 +19,52 @@ app.config["BASE_URL"] = os.environ.get("BASE_URL")
 
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
+DATABASE_URL = os.environ.get("DATABASE_URL")
 DB_PATH = os.path.join(app.config["UPLOAD_FOLDER"], "files.json")
 FILES_DB = {}
+USE_PG = False
 
-if os.path.exists(DB_PATH):
+if DATABASE_URL:
     try:
-        import json
-        with open(DB_PATH) as f:
-            FILES_DB = json.load(f)
-    except Exception:
-        FILES_DB = {}
+        import psycopg2
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS files (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                data BYTEA NOT NULL,
+                size BIGINT NOT NULL,
+                uploaded TEXT NOT NULL,
+                downloads INT DEFAULT 0
+            )
+        """)
+        cur.execute("SELECT id, name, size, uploaded, downloads FROM files")
+        for row in cur.fetchall():
+            FILES_DB[row[0]] = {
+                "name": row[1],
+                "size": row[2],
+                "uploaded": row[3],
+                "downloads": row[4],
+            }
+        cur.close()
+        USE_PG = True
+    except Exception as e:
+        print(f"PostgreSQL init failed, using local storage: {e}")
+
+if not USE_PG:
+    if os.path.exists(DB_PATH):
+        try:
+            with open(DB_PATH) as f:
+                FILES_DB = json.load(f)
+        except Exception:
+            FILES_DB = {}
 
 
 def save_db():
-    import json
+    if USE_PG:
+        return
     with open(DB_PATH, "w") as f:
         json.dump(FILES_DB, f, indent=2)
 
@@ -106,17 +139,38 @@ def upload():
         if not filename:
             filename = f"file_{uuid.uuid4().hex[:8]}"
         file_id = uuid.uuid4().hex[:12]
-        save_path = os.path.join(app.config["UPLOAD_FOLDER"], f"{file_id}_{filename}")
-        f.save(save_path)
-        size = os.path.getsize(save_path)
-        FILES_DB[file_id] = {
-            "name": filename,
-            "path": save_path,
-            "size": size,
-            "uploaded": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "downloads": 0,
-        }
-        save_db()
+        data = f.read()
+        size = len(data)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        if USE_PG:
+            import psycopg2
+            conn = psycopg2.connect(DATABASE_URL)
+            conn.autocommit = True
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO files (id, name, data, size, uploaded, downloads) VALUES (%s, %s, %s, %s, %s, 0) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data",
+                (file_id, filename, psycopg2.Binary(data), size, now)
+            )
+            cur.close()
+            conn.close()
+            FILES_DB[file_id] = {
+                "name": filename,
+                "size": size,
+                "uploaded": now,
+                "downloads": 0,
+            }
+        else:
+            save_path = os.path.join(app.config["UPLOAD_FOLDER"], f"{file_id}_{filename}")
+            with open(save_path, "wb") as sf:
+                sf.write(data)
+            FILES_DB[file_id] = {
+                "name": filename,
+                "path": save_path,
+                "size": size,
+                "uploaded": now,
+                "downloads": 0,
+            }
+            save_db()
         results.append({"id": file_id, "name": filename, "size": format_size(size)})
     return jsonify({"files": results})
 
@@ -127,8 +181,22 @@ def download(file_id):
         return jsonify({"error": "File not found"}), 404
     info = FILES_DB[file_id]
     info["downloads"] += 1
-    save_db()
-    return send_file(info["path"], as_attachment=True, download_name=info["name"])
+    if USE_PG:
+        import psycopg2
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("UPDATE files SET downloads = downloads + 1 WHERE id = %s", (file_id,))
+        cur.execute("SELECT data FROM files WHERE id = %s", (file_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row:
+            return send_file(io.BytesIO(row[0]), as_attachment=True, download_name=info["name"])
+        return jsonify({"error": "File data not found"}), 404
+    else:
+        save_db()
+        return send_file(info["path"], as_attachment=True, download_name=info["name"])
 
 
 @app.route("/preview/<file_id>")
@@ -145,6 +213,17 @@ def preview(file_id):
         "mp4": "video/mp4",
     }
     mime = mime_types.get(ext, "application/octet-stream")
+    if USE_PG:
+        import psycopg2
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT data FROM files WHERE id = %s", (file_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row:
+            return send_file(io.BytesIO(row[0]), mimetype=mime)
+        return jsonify({"error": "File not found"}), 404
     return send_file(info["path"], mimetype=mime)
 
 
@@ -152,11 +231,20 @@ def preview(file_id):
 def delete(file_id):
     if file_id not in FILES_DB:
         return jsonify({"error": "File not found"}), 404
-    info = FILES_DB[file_id]
-    if os.path.exists(info["path"]):
-        os.remove(info["path"])
+    if USE_PG:
+        import psycopg2
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("DELETE FROM files WHERE id = %s", (file_id,))
+        cur.close()
+        conn.close()
+    else:
+        info = FILES_DB[file_id]
+        if os.path.exists(info["path"]):
+            os.remove(info["path"])
+        save_db()
     del FILES_DB[file_id]
-    save_db()
     return jsonify({"success": True})
 
 
@@ -202,8 +290,6 @@ def start_ngrok():
         log(f"Public URL: {public_url}  (internet)")
     except Exception as e:
         log(f"Internet tunnel not available: {e}")
-        if not os.environ.get("FILE_SHARE_BG"):
-            print("    Run: ngrok config add-authtoken <your-token>")
 
 
 LOG_FILE = os.path.join(os.path.dirname(__file__), "fileshare.log")
@@ -218,16 +304,18 @@ def log(msg):
 
 
 if __name__ == "__main__":
-    on_cloud = os.environ.get("FLY_APP_NAME") is not None
+    on_cloud = os.environ.get("RENDER") is not None or os.environ.get("FLY_APP_NAME") is not None
     background = os.environ.get("FILE_SHARE_BG") == "1"
     port = int(os.environ.get("PORT", 5000))
 
     log("=" * 50)
     log("FileShare - Workspace File Sharing")
     log("=" * 50)
+    log(f"Storage: {'PostgreSQL' if USE_PG else 'Local filesystem'}")
+    log(f"Port: {port}")
 
     if on_cloud:
-        log(f"Running on Fly.io: {os.environ.get('FLY_APP_NAME')}")
+        log(f"Running on cloud")
         log(f"Base URL: {app.config.get('BASE_URL', 'not set')}")
     else:
         local_ip = get_local_ip()

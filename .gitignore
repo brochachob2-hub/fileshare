@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+uploads/*
+!uploads/.gitkeep
+fileshare.log
+install_service.ps1
+*.vbs
+start_fileshare.*

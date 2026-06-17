@@ -1,0 +1,9 @@
+__pycache__
+*.pyc
+.git
+.gitignore
+uploads/*
+!uploads/.gitkeep
+fileshare.log
+install_service.ps1
+*.vbs

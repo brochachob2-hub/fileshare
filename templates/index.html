@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FileShare</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+    <div class="bg-layer"></div>
+    <div class="bg-overlay"></div>
+
+    <div class="app">
+        <header>
+            <div class="logo">
+                <i class="fa-solid fa-shuttle-space"></i>
+                <span>FileShare</span>
+            </div>
+            <div class="header-info">
+                <div class="device-badge">
+                    <i class="fa-solid fa-desktop"></i>
+                    <span id="device-name">{{ local_ip }}</span>
+                </div>
+                <div class="stats" id="stats">
+                    <span><i class="fa-solid fa-file"></i> <span id="stat-files">0</span> files</span>
+                    <span><i class="fa-solid fa-hard-drive"></i> <span id="stat-size">0 B</span></span>
+                    <span><i class="fa-solid fa-download"></i> <span id="stat-downloads">0</span> downloads</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="connection-bar" id="connection-bar">
+            <div class="url-display">
+                <span class="url-label"><i class="fa-solid fa-globe"></i> Share this link with anyone:</span>
+                <div class="url-row">
+                    <input type="text" id="public-url" value="{{ base_url }}" readonly>
+                    <button class="btn-copy" onclick="copyUrl()" title="Copy URL">
+                        <i class="fa-solid fa-copy"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="status-badge" id="status-badge">
+                <span class="status-dot" id="status-dot"></span>
+                <span id="status-text">Connecting...</span>
+            </div>
+        </div>
+
+        <main>
+            <div class="drop-zone" id="drop-zone">
+                <div class="drop-content">
+                    <div class="drop-icon">
+                        <i class="fa-solid fa-cloud-arrow-up"></i>
+                    </div>
+                    <h2>Drop files here to share</h2>
+                    <p>or click to browse</p>
+                    <input type="file" id="file-input" multiple hidden>
+                    <button class="btn-browse" onclick="document.getElementById('file-input').click()">
+                        <i class="fa-solid fa-folder-open"></i> Browse Files
+                    </button>
+                </div>
+                <div class="drop-active">
+                    <div class="drop-active-icon">
+                        <i class="fa-solid fa-plus"></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="upload-progress" id="upload-progress" style="display:none;">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                <span class="progress-text" id="progress-text">Uploading...</span>
+            </div>
+
+            {% if files %}
+            <div class="files-section">
+                <div class="section-header">
+                    <h3><i class="fa-solid fa-clock-rotate-left"></i> Shared Files</h3>
+                    <button class="btn-clear" onclick="clearAll()" title="Delete all files">
+                        <i class="fa-solid fa-trash"></i> Clear All
+                    </button>
+                </div>
+                <div class="file-list" id="file-list">
+                    {% for file in files %}
+                    <div class="file-card" data-id="{{ file.id }}">
+                        <div class="file-icon {{ file.icon }}">
+                            <i class="fa-solid {{ file.icon }}"></i>
+                        </div>
+                        <div class="file-info">
+                            <span class="file-name" title="{{ file.name }}">{{ file.name }}</span>
+                            <span class="file-meta">{{ file.size }} &middot; {{ file.uploaded }} &middot; {{ file.downloads }} downloads</span>
+                        </div>
+                        <div class="file-actions">
+                            <button class="btn-icon" onclick="showQR('{{ file.id }}', '{{ file.name }}')" title="QR Code">
+                                <i class="fa-solid fa-qrcode"></i>
+                            </button>
+                            <a href="/preview/{{ file.id }}" target="_blank" class="btn-icon" title="Preview">
+                                <i class="fa-solid fa-eye"></i>
+                            </a>
+                            <a href="/download/{{ file.id }}" class="btn-icon btn-download" title="Download">
+                                <i class="fa-solid fa-download"></i>
+                            </a>
+                            <button class="btn-icon btn-delete" onclick="deleteFile('{{ file.id }}')" title="Delete">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% else %}
+            <div class="empty-state" id="empty-state">
+                <i class="fa-solid fa-inbox"></i>
+                <p>No files shared yet</p>
+            </div>
+            {% endif %}
+        </main>
+    </div>
+
+    <div class="modal-overlay" id="qr-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-qrcode"></i> Scan to Download</h3>
+                <button class="btn-close" onclick="closeQR()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <img id="qr-image" src="" alt="QR Code">
+                <p class="qr-filename" id="qr-filename"></p>
+                <p class="qr-hint">Scan with your phone camera to download</p>
+            </div>
+        </div>
+    </div>
+
+        <div class="toast" id="toast"></div>
+
+    <input type="hidden" id="base-url" value="{{ base_url }}">
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

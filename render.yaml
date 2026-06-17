@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: fileshare
+    runtime: python
+    repo: https://github.com/brochachob2-hub/fileshare
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    envVars:
+      - key: BASE_URL
+        value: https://fileshare.onrender.com
+      - key: UPLOAD_FOLDER
+        value: /var/data/uploads
